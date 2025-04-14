@@ -26,7 +26,7 @@ class App(ctk.CTk):
         self.angle = 0
 
         # -12 for the height of the title bar
-        self.file_view = FileView(self, self, height=self.app_height-self.padding*2-12)
+        self.file_view = Panel(self, self, height=self.app_height-self.padding*2-12)
         self.file_view.grid(row=0, column=0, padx=self.padding, pady=self.padding)
 
         self.picture_view = PictureView(self, self)
@@ -37,6 +37,8 @@ class App(ctk.CTk):
         self.bind('<Right>', self.show_next_image)
         self.bind('<KeyPress-q>', self.rotate_left)
         self.bind('<KeyPress-e>', self.rotate_right)
+        self.bind('<KeyPress-d>', self.set_keep)
+        self.bind('<KeyPress-f>', self.set_delete)
 
     def delete(self):
         self.jpegs = []
@@ -45,7 +47,9 @@ class App(ctk.CTk):
     def show_previous_image(self, event=None):
         if self.active_index is None:
             return
-        
+
+        self.save_details()
+
         if self.active_index == 0:
             self.active_index = len(self.jpegs)-1
         else:
@@ -65,6 +69,20 @@ class App(ctk.CTk):
             self.active_index += 1
 
         self.picture_view.open_image(self.jpegs[self.active_index])
+
+    def reset_delete_option(self):
+        db = get_db()
+
+        delete_action = db.execute(
+            """
+            SELECT delete_action FROM files
+             WHERE folder=? AND filename=?
+            """, (self.current_dir, self.jpeg_display[self.active_index])
+        ).fetchone()['delete_action']
+
+        self.file_view.options.set(delete_action.title())
+        if delete_action is None:
+            self.file_view.options.set('Keep')
 
     def rotate_right(self, event=None):
         if self.picture_view.current_image is None:
@@ -89,16 +107,23 @@ class App(ctk.CTk):
     def unlock_key(self):
         self.key_lock = False
 
-    def save_details(self, delete_action=None):
+    def set_keep(self, event=None):
+        self.file_view.options.set('Keep')
+
+    def set_delete(self, event=None):
+        self.file_view.options.set('Delete')
+
+    def save_details(self):
         db = get_db()
 
         save_angle = ((self.angle / 90) % 4) * 90
+        delete_action = self.file_view.options.get().lower()
 
         db.execute(
             """
             UPDATE files
              SET delete_action=?, rotation=?
-             WHERE folder=? and filename=?
+             WHERE folder=? AND filename=?
             """, (delete_action, save_angle, self.current_dir, self.jpeg_display[self.active_index])
         )
         db.commit()
@@ -108,18 +133,24 @@ class App(ctk.CTk):
         return super().mainloop(n)
 
 
-class FileView(ctk.CTkScrollableFrame):
-    def __init__(self, parent, controller, height:int):
-        super().__init__(parent, height=height)
+class Panel(ctk.CTkFrame):
+    def __init__(self, parent, controller, height):
+        super().__init__(parent)
         self.controller = controller
 
         self.browse_button = ctk.CTkButton(self, text='Browse', command=self.browse_directory)
         self.browse_button.pack(pady=5, anchor='nw')
-        self.tree_view = FileTree(self, controller)
-        self.tree_view.pack()
 
+        # TODO: Add panel to keep/discard
+        self.options = ctk.CTkOptionMenu(self, values=['Keep', 'Delete'])
+        self.options.pack(anchor='nw')
+
+        # -10 for the padding, -30 for the height of the button
+        self.file_view = FileView(self, controller, height-10-30)
+        self.file_view.pack()
+    
     def browse_directory(self):
-        for widget in self.tree_view.winfo_children():
+        for widget in self.file_view.tree_view.winfo_children():
             widget.destroy()
 
         folder_path = filedialog.askdirectory()
@@ -149,7 +180,7 @@ class FileView(ctk.CTkScrollableFrame):
         if self.controller.jpegs:
             self.controller.picture_view.open_image(self.controller.jpegs[0])
             self.controller.active_index = 0
-        self.tree_view.update()
+        self.file_view.tree_view.update()
 
     def create_db_entry(self, folder_path):
         db = get_db()
@@ -165,6 +196,15 @@ class FileView(ctk.CTkScrollableFrame):
         db.commit()
 
         close_db(db)
+
+
+class FileView(ctk.CTkScrollableFrame):
+    def __init__(self, parent, controller, height:int):
+        super().__init__(parent, height=height)
+        self.controller = controller
+
+        self.tree_view = FileTree(self, controller)
+        self.tree_view.pack()
 
 
 class FileTree(ctk.CTkFrame):
@@ -199,11 +239,13 @@ class PictureView(ctk.CTkFrame):
         db = get_db()
         self.controller.angle = db.execute(
             """
-            SELECT rotation from files
-             WHERE folder=? and filename=?
+            SELECT rotation FROM files
+             WHERE folder=? AND filename=?
             """, (self.controller.current_dir, self.controller.jpeg_display[self.controller.active_index])
         ).fetchone()['rotation']
         db.close()
+
+        self.controller.reset_delete_option()
 
         self.rotate_image()
 

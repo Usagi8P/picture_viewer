@@ -6,4 +6,8 @@ Mainly made to delete .raw files .jpegs with the same name
 - [x] Create tk inter window 
 - [x] Create widget to view folder/folder structure
 - [x] Create widget to view picture
-- [ ] Create mark for saving or deleting images 
+- [x] Create mark for saving or deleting images
+- [x] Create function to delete unwanted images
+- [x] Create visual to identify marked images
+- [x] Delete files marked for delete
+- [ ] Create filter for images marked as keep / delete

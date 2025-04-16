@@ -48,6 +48,7 @@ class App(ctk.CTk):
         if self.active_index is None:
             return
 
+        self.set_action_mark()
         self.save_details()
 
         if self.active_index == 0:
@@ -61,6 +62,7 @@ class App(ctk.CTk):
         if self.active_index is None:
             return
         
+        self.set_action_mark()
         self.save_details()
 
         if self.active_index == len(self.jpegs)-1:
@@ -80,9 +82,10 @@ class App(ctk.CTk):
             """, (self.current_dir, self.jpeg_display[self.active_index])
         ).fetchone()['delete_action']
 
-        self.file_view.options.set(delete_action.title())
-        if delete_action is None:
-            self.file_view.options.set('Keep')
+        
+        self.file_view.options.set('Keep')
+        if delete_action is not None:
+            self.file_view.options.set(delete_action.title())
 
     def rotate_right(self, event=None):
         if self.picture_view.current_image is None:
@@ -129,6 +132,16 @@ class App(ctk.CTk):
         db.commit()
         close_db(db)
 
+    def set_action_mark(self):
+        delete_action = self.file_view.options.get().lower()
+
+        for row in self.file_view.file_view.tree_view.file_rows:
+            if row.file == self.jpeg_display[self.active_index]:
+                if delete_action == 'keep':
+                    row.action_mark.configure(image=ctk.CTkImage(row.checkmark, size=(10,10)),text='')
+                if delete_action == 'delete':
+                    row.action_mark.configure(image=ctk.CTkImage(row.cross, size=(10,10)),text='')
+
     def mainloop(self, n:int=0) -> None:
         return super().mainloop(n)
 
@@ -141,12 +154,14 @@ class Panel(ctk.CTkFrame):
         self.browse_button = ctk.CTkButton(self, text='Browse', command=self.browse_directory)
         self.browse_button.pack(pady=5, anchor='nw')
 
-        # TODO: Add panel to keep/discard
-        self.options = ctk.CTkOptionMenu(self, values=['Keep', 'Delete'])
-        self.options.pack(anchor='nw')
+        self.discard_button = ctk.CTkButton(self, text='Discard', command=self.discard)
+        self.discard_button.pack(pady=(0,5), anchor='nw')
 
-        # -10 for the padding, -30 for the height of the button
-        self.file_view = FileView(self, controller, height-10-30)
+        self.options = ctk.CTkOptionMenu(self, values=['Keep', 'Delete'])
+        self.options.pack(pady=(0,5), anchor='nw')
+
+        # -10 for the padding, -30 for the height of the button, -30 for the options, -30 for discard button
+        self.file_view = FileView(self, controller, height-10-30-30-30)
         self.file_view.pack()
     
     def browse_directory(self):
@@ -197,6 +212,30 @@ class Panel(ctk.CTkFrame):
 
         close_db(db)
 
+    def discard(self):
+        db = get_db()
+
+        to_delete = db.execute(
+            """
+            SELECT * FROM files
+             WHERE delete_action='delete'
+            """
+        ).fetchall()
+
+        for entry in to_delete:
+            filename = entry['filename'].split('.')[0]
+            jpg_path = os.path.join(entry['folder'], entry['filename'])
+            arw_path = os.path.join(entry['folder'], filename+'.ARW')
+
+            if os.path.exists(jpg_path):
+                os.remove(jpg_path)
+                print(f'deleted {filename}.jpg')
+
+            if os.path.exists(arw_path):
+                os.remove(arw_path)
+                print(f'deleted {filename}.arw')
+
+        print('deleted files')
 
 class FileView(ctk.CTkScrollableFrame):
     def __init__(self, parent, controller, height:int):
@@ -209,17 +248,58 @@ class FileView(ctk.CTkScrollableFrame):
 
 class FileTree(ctk.CTkFrame):
     def __init__(self, parent, controller):
-        super().__init__(parent)
+        super().__init__(parent, fg_color='transparent')
         self.files = []
         self.controller = controller
+        self.file_rows = []
+
+        self.checkmark = Image.open('assets/icon_checkmark.png')
+        self.cross = Image.open('assets/icon_cross.png')
 
     def update(self):
         for i, file in enumerate(self.controller.jpeg_display):
             path = self.controller.jpegs[i]
-            button = ctk.CTkButton(self, text=file, fg_color='transparent', height=10, command= lambda p=path: self.view_file(p))
-            button.pack(anchor='w', fill='x')
 
-    def view_file(self,path):
+            file_row = FileRow(self, self.controller, file, path, self.checkmark, self.cross)
+            file_row.pack(anchor='w', fill='x')
+            self.file_rows.append(file_row)
+
+
+class FileRow(ctk.CTkFrame):
+    def __init__(self, parent, controller, file, path, checkmark, cross):
+        super().__init__(parent)
+        self.controller = controller
+        self.file = file
+        self.checkmark = checkmark
+        self.cross = cross
+        self.path = path
+
+        button = ctk.CTkButton(self, text=file, fg_color='transparent', height=10, command= lambda p=self.path: self.view_file(p))
+        button.pack(side='left', anchor='w')
+
+        self.action_mark = ctk.CTkLabel(self, text='')
+        self.action_mark.pack()
+        
+        self.set_action_mark()
+
+    def set_action_mark(self):
+        db = get_db()
+
+        action = db.execute(
+            """
+            SELECT delete_action FROM files
+             WHERE folder=? AND filename=?
+            """, (self.controller.current_dir, self.file)
+        ).fetchone()['delete_action']
+        close_db(db)
+
+        if action == 'keep':
+            self.action_mark.configure(image=ctk.CTkImage(self.checkmark, size=(10,10)),text='')
+        if action == 'delete':
+            self.action_mark.configure(image=ctk.CTkImage(self.cross, size=(10,10)),text='')
+
+    def view_file(self, path):
+        self.controller.set_action_mark()
         self.controller.save_details()
         self.controller.picture_view.open_image(path)
         self.controller.active_index = self.controller.jpegs.index(path)

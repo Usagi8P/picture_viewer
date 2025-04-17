@@ -24,6 +24,8 @@ class App(ctk.CTk):
         self.jpeg_display = []
         self.active_index = 0
         self.angle = 0
+        self.page = 0
+        self.images_per_page = 25
 
         # -12 for the height of the title bar
         self.file_view = Panel(self, self, height=self.app_height-self.padding*2-12)
@@ -48,12 +50,12 @@ class App(ctk.CTk):
         if self.active_index is None:
             return
 
-        self.set_action_mark()
         self.save_details()
 
         if self.active_index == 0:
-            self.active_index = len(self.jpegs)-1
+            self.previous()
         else:
+            self.set_action_mark()
             self.active_index -= 1
 
         self.picture_view.open_image(self.jpegs[self.active_index])
@@ -62,12 +64,12 @@ class App(ctk.CTk):
         if self.active_index is None:
             return
         
-        self.set_action_mark()
         self.save_details()
 
         if self.active_index == len(self.jpegs)-1:
-            self.active_index = 0
+            self.next()
         else:
+            self.set_action_mark()
             self.active_index += 1
 
         self.picture_view.open_image(self.jpegs[self.active_index])
@@ -142,6 +144,16 @@ class App(ctk.CTk):
                 if delete_action == 'delete':
                     row.action_mark.configure(image=ctk.CTkImage(row.cross, size=(10,10)),text='')
 
+    def previous(self):
+        if self.page > 0:
+            self.page -= 1
+            self.file_view.list_files(self.current_dir)
+
+    def next(self):
+        if self.jpeg_display:
+            self.page += 1
+            self.file_view.list_files(self.current_dir)
+
     def mainloop(self, n:int=0) -> None:
         return super().mainloop(n)
 
@@ -165,17 +177,22 @@ class Panel(ctk.CTkFrame):
         self.file_view.pack()
     
     def browse_directory(self):
-        for widget in self.file_view.tree_view.winfo_children():
-            widget.destroy()
-
         folder_path = filedialog.askdirectory()
         if folder_path:
             self.controller.current_dir = folder_path
             self.create_db_entry(folder_path)
             self.list_files(folder_path)
 
+    def clear_widgets(self):
+        for widget in self.file_view.tree_view.winfo_children():
+            widget.destroy()
+
+        self.file_view.tree_view.file_rows.clear()
+
     def list_files(self, folder_path):
+        self.clear_widgets()
         self.controller.delete()
+
         if not folder_path:
             return
 
@@ -185,7 +202,8 @@ class Panel(ctk.CTkFrame):
             """
             SELECT filename FROM files
              WHERE folder = ?
-            """, (folder_path,)
+             LIMIT ? OFFSET ?
+            """, (folder_path, self.controller.images_per_page, self.controller.page*self.controller.images_per_page)
         ).fetchall()
 
         close_db(db)
@@ -235,6 +253,16 @@ class Panel(ctk.CTkFrame):
                 os.remove(arw_path)
                 print(f'deleted {filename}.arw')
 
+            db.execute(
+                """
+                DELETE FROM files
+                 WHERE folder=? AND filename=?
+                """, (entry['folder'], entry['filename'])
+            )
+        
+        db.commit()
+        close_db(db)
+
         print('deleted files')
 
 class FileView(ctk.CTkScrollableFrame):
@@ -242,8 +270,14 @@ class FileView(ctk.CTkScrollableFrame):
         super().__init__(parent, height=height)
         self.controller = controller
 
+        self.previous_button = ctk.CTkButton(self, text='Previous', fg_color='transparent', height=10, command= self.controller.previous)
+        self.previous_button.pack()
+
         self.tree_view = FileTree(self, controller)
         self.tree_view.pack()
+
+        self.next_button = ctk.CTkButton(self, text='Next', fg_color='transparent', height=10, command= self.controller.next)
+        self.next_button.pack()     
 
 
 class FileTree(ctk.CTkFrame):
